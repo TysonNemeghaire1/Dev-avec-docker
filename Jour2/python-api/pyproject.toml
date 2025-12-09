@@ -8,14 +8,9 @@ packages = [{include = "app"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-fastapi = "^0.104.0"
-uvicorn = {extras = ["standard"], version = "^0.24.0"}
-sqlalchemy = "^2.0.0"
-psycopg2-binary = "^2.9.9"
-pydantic = "^2.4.0"
-python-multipart = "^0.0.6"
-python-jose = {extras = ["cryptography"], version = "^3.3.0"}
-passlib = {extras = ["bcrypt"], version = "^1.7.4"}
+fastapi = "^0.115.6"
+uvicorn = {extras = ["standard"], version = "^0.34.0"}
+psutil = "^6.1.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"

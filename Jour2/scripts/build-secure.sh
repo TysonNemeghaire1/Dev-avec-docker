@@ -84,6 +84,7 @@ analyze_size() {
 }
 
 # Fonction pour construire une image avec sécurité
+
 build_secure_image() {
     local service_name=$1
     local dockerfile_path=$2
@@ -92,7 +93,7 @@ build_secure_image() {
     show_status "info" "Construction de l'image $service_name avec sécurité renforcée"
     
     # Build avec BuildKit et cache optimisé
-    docker build \
+    docker buildx build --load \
         --file "$dockerfile_path" \
         --tag "${service_name}:${image_tag}" \
         --tag "${service_name}:latest" \

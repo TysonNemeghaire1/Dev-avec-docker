@@ -40,7 +40,7 @@ build_image() {
     echo "Context: $context"
     echo ""
     
-    if docker build -f "$dockerfile" -t "$image_name" "$context"; then
+    if docker buildx build --load -f "$dockerfile" -t "$image_name" "$context"; then
         show_status "success" "Image $image_name construite avec succès"
         
         # Afficher la taille de l'image

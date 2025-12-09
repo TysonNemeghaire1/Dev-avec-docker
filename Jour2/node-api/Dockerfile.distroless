@@ -1,0 +1,68 @@
+# Dockerfile.distroless (🔒 SÉCURITÉ MAXIMALE - Image distroless Debian 12)
+# Ce Dockerfile utilise une image distroless Node.js Debian 12 pour une sécurité maximale
+
+# ===================================
+# ÉTAPE 1 : BUILD SÉCURISÉ
+# ===================================
+FROM node:20-slim AS builder
+
+# Installer les outils de sécurité et de build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Optimisation du cache Docker - copier d'abord les dépendances
+COPY package*.json ./
+
+# Installation des dépendances avec sécurité renforcée
+RUN npm install --production --no-audit --no-fund && \
+    npm install --no-audit --no-fund
+
+# Copier les fichiers de configuration
+COPY tsconfig.json ./
+
+# Copier le code source
+COPY src ./src
+
+# Build TypeScript avec optimisations
+RUN npm run build
+
+# Supprimer les devDependencies et nettoyer le cache
+RUN npm prune --production --no-audit --no-fund && \
+    npm cache clean --force
+
+# ===================================
+# ÉTAPE 2 : DISTROLESS DEBIAN 12
+# ===================================
+FROM gcr.io/distroless/nodejs20-debian12
+
+# Définir le répertoire de travail
+WORKDIR /app
+
+# Copier uniquement le strict nécessaire depuis le builder
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./
+
+# Exposer le port (documentatif)
+EXPOSE 3000
+
+# Aucun shell disponible - sécurité maximale
+# L'image distroless ne contient que :
+# - Node.js runtime
+# - Les bibliothèques système minimales
+# - Aucun shell, package manager, ou outils de debug
+CMD ["dist/server.js"]
+
+# Avantages de l'image distroless :
+# 1. Surface d'attaque minimale (pas de shell, bash, etc.)
+# 2. Taille réduite (seulement le runtime Node.js)
+# 3. Sécurité renforcée (impossible d'exécuter des commandes)
+# 4. Conformité aux standards de sécurité
+# 5. Pas de package manager en production
+# 6. Impossibilité d'installer des outils malveillants

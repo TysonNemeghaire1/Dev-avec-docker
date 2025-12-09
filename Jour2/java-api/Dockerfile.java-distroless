@@ -1,0 +1,62 @@
+# Dockerfile.java-distroless (🔒 SÉCURITÉ MAXIMALE - Java distroless Debian 12)
+# Ce Dockerfile utilise une image distroless Java Debian 12 pour une sécurité maximale
+
+# ===================================
+# ÉTAPE 1 : BUILD SÉCURISÉ AVEC MAVEN
+# ===================================
+FROM maven:3.9.9-eclipse-temurin-21 AS builder
+
+# Définir le répertoire de travail
+WORKDIR /app
+
+# Copier le POM pour optimiser le cache des dépendances
+COPY pom.xml ./
+
+# Télécharger les dépendances avec cache sécurisé
+RUN mvn dependency:go-offline -B --batch-mode --no-transfer-progress
+
+# Copier le code source
+COPY src ./src
+
+# Build de l'application avec sécurité renforcée
+RUN mvn clean package -DskipTests -B --batch-mode --no-transfer-progress \
+    -Dmaven.test.skip=true \
+    -Dmaven.javadoc.skip=true \
+    -Dmaven.source.skip=true
+
+# Extraire les layers du JAR pour optimisation Docker
+RUN java -Djarmode=layertools -jar target/*.jar extract --destination target/extracted
+
+# ===================================
+# ÉTAPE 2 : JRE DISTROLESS DEBIAN 12
+# ===================================
+FROM gcr.io/distroless/java21-debian12
+
+# Définir le répertoire de travail
+WORKDIR /app
+
+# Copier les layers séparément pour meilleur cache Docker
+# Les dépendances changent rarement = layer mis en cache
+COPY --from=builder /app/target/extracted/dependencies/ ./
+# Les ressources Spring Boot
+COPY --from=builder /app/target/extracted/spring-boot-loader/ ./
+# Les snapshots de dépendances
+COPY --from=builder /app/target/extracted/snapshot-dependencies/ ./
+# Le code applicatif (change souvent = dernier layer)
+COPY --from=builder /app/target/extracted/application/ ./
+
+# Exposer le port
+EXPOSE 8080
+
+# Lancer l'application avec JRE distroless
+# Utiliser le Main-Class du Spring Boot Loader
+ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]
+
+# Avantages de l'image distroless Java :
+# 1. Surface d'attaque minimale (pas de shell, Maven, etc.)
+# 2. Taille réduite (seulement le JRE, pas le JDK complet)
+# 3. Sécurité renforcée (impossible d'exécuter des commandes)
+# 4. Pas de build tools en production
+# 5. Impossibilité d'installer des outils malveillants
+# 6. Conformité aux standards de sécurité
+# 7. Optimisation pour la production (pas de compilateur)

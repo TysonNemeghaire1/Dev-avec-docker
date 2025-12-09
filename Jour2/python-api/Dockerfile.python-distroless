@@ -1,0 +1,78 @@
+# Dockerfile.python-distroless (🔒 SÉCURITÉ MAXIMALE - Python distroless Debian 12)
+# Ce Dockerfile utilise une image distroless Python Debian 12 pour une sécurité maximale
+
+# ===================================
+# ÉTAPE 1 : BUILDER SÉCURISÉ
+# ===================================
+FROM python:3.11-slim-bookworm AS builder
+
+# Installer les outils de sécurité et de build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Installer Poetry avec version fixe pour la reproductibilité
+RUN pip install --no-cache-dir --upgrade pip==24.0.0 poetry==1.8.3
+
+# Définir les variables d'environnement Poetry sécurisées
+ENV POETRY_NO_INTERACTION=1 \
+    POETRY_VENV_IN_PROJECT=1 \
+    POETRY_CACHE_DIR=/tmp/poetry_cache
+
+WORKDIR /app
+
+# Copier uniquement les fichiers de dépendances (optimisation du cache)
+COPY pyproject.toml poetry.lock* ./
+
+# Créer un environnement virtuel et installer les dépendances
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip==24.0.0
+
+# Exporter et installer les dépendances dans le venv
+RUN poetry export -f requirements.txt --output requirements.txt --without-hashes --only=main && \
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt && \
+    /opt/venv/bin/pip install --no-cache-dir uvicorn[standard]==0.24.0
+
+# Optimisation de la taille: nettoyage conservateur (Option A)
+RUN find /opt/venv -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /opt/venv -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
+    find /opt/venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /opt/venv -type f -name "*.pyc" -delete 2>/dev/null || true && \
+    find /opt/venv -type f -name "*.pyo" -delete 2>/dev/null || true && \
+    rm -rf /root/.cache/pip 2>/dev/null || true
+
+# ===================================
+# ÉTAPE 2 : DISTROLESS PYTHON DEBIAN 12
+# ===================================
+FROM gcr.io/distroless/python3-debian12
+
+# Définir les variables d'environnement Python
+ENV PYTHONPATH=/opt/venv/lib/python3.11/site-packages \
+    PATH=/opt/venv/bin:$PATH
+
+# Définir le répertoire de travail
+WORKDIR /app
+
+# Copier l'environnement virtuel complet depuis le builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Copier le code applicatif
+COPY app /app/app
+
+# Exposer le port
+EXPOSE 8000
+
+# Lancer l'application avec le module Python uvicorn
+# Dans distroless, on utilise python -m au lieu du binaire direct
+ENTRYPOINT ["/usr/bin/python3", "-m", "uvicorn"]
+CMD ["app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# Avantages de l'image distroless Python :
+# 1. Surface d'attaque minimale (pas de shell, pip, etc.)
+# 2. Taille réduite (seulement le runtime Python)
+# 3. Sécurité renforcée (impossible d'exécuter des commandes)
+# 4. Pas de package manager en production
+# 5. Impossibilité d'installer des outils malveillants
+# 6. Conformité aux standards de sécurité
