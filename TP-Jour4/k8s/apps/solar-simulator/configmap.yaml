@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: solar-simulator-config
+  namespace: solar-prod
+  labels:
+    app: solar-simulator
+data:
+  PORT: "3000"
+  METRICS_INTERVAL: "30000"
+  NODE_ENV: "production"
