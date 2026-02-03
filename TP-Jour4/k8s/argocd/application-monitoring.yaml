@@ -8,9 +8,9 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/votre-username/solar-monitoring-gitops.git
+    repoURL: https://github.com/TysonNemeghaire1/Dev-avec-docker.git
     targetRevision: HEAD
-    path: k8s/monitoring
+    path: TP-Jour4/k8s/monitoring
   destination:
     server: https://kubernetes.default.svc
     namespace: solar-prod
