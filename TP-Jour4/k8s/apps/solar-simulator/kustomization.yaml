@@ -8,6 +8,8 @@ resources:
   - deployment.yaml
   - service.yaml
 
-commonLabels:
-  app.kubernetes.io/name: solar-simulator
-  app.kubernetes.io/part-of: solar-monitoring
+labels:
+  - pairs:
+      app.kubernetes.io/name: solar-simulator
+      app.kubernetes.io/part-of: solar-monitoring
+    includeSelectors: false
