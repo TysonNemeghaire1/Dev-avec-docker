@@ -1,0 +1,19 @@
+{
+  "name": "solar-simulator",
+  "version": "1.0.0",
+  "description": "Solar farm data simulator with Prometheus metrics",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test tests/",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "prom-client": "^15.1.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
