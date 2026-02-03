@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: solar-prod
+  labels:
+    app: prometheus
+data:
+  solar-alerts.yaml: |
+    groups:
+      - name: solar_alerts
+        interval: 30s
+        rules:
+          # Alerte 1: Surchauffe panneau (> 65°C pendant 10 min)
+          - alert: SolarPanelOverheating
+            expr: solar_panel_temperature_celsius > 65
+            for: 10m
+            labels:
+              severity: critical
+              component: panel
+            annotations:
+              summary: "Panneau en surchauffe"
+              description: "Le panneau {{ $labels.panel_id }} de la ferme {{ $labels.farm }} dépasse 65°C (actuel: {{ $value }}°C)"
+              runbook_url: "https://wiki.solargrid.io/alerts/overheating"
+
+          # Alerte 2: Panne onduleur (status = 0)
+          - alert: InverterFailure
+            expr: solar_inverter_status == 0
+            for: 2m
+            labels:
+              severity: critical
+              component: inverter
+            annotations:
+              summary: "Onduleur en panne"
+              description: "L'onduleur {{ $labels.inverter_id }} de la ferme {{ $labels.farm }} est hors service"
+              runbook_url: "https://wiki.solargrid.io/alerts/inverter-failure"
+
+          # Alerte 3: Production anormalement basse (< 50% du théorique)
+          - alert: LowProductionEfficiency
+            expr: (solar_power_kw / solar_theoretical_power_kw) < 0.5 and solar_theoretical_power_kw > 100
+            for: 15m
+            labels:
+              severity: warning
+              component: production
+            annotations:
+              summary: "Production anormalement basse"
+              description: "La ferme {{ $labels.farm }} produit moins de 50% de sa capacité théorique (ratio: {{ printf \"%.2f\" $value }})"
+              runbook_url: "https://wiki.solargrid.io/alerts/low-production"
+
+          # Alerte 4: Perte de données capteur (absence > 5 min)
+          - alert: SensorDataLoss
+            expr: solar_sensor_status == 0
+            for: 5m
+            labels:
+              severity: warning
+              component: sensor
+            annotations:
+              summary: "Capteur défaillant"
+              description: "Le capteur de la ferme {{ $labels.farm }} ne remonte plus de données depuis plus de 5 minutes"
+              runbook_url: "https://wiki.solargrid.io/alerts/sensor-failure"
+
+          # Alerte 5: SLO breach - Disponibilité < 99.5%
+          - alert: SLOAvailabilityBreach
+            expr: solar_availability_ratio < 0.995
+            for: 5m
+            labels:
+              severity: critical
+              component: slo
+            annotations:
+              summary: "Violation du SLO de disponibilité"
+              description: "La ferme {{ $labels.farm }} a une disponibilité de {{ printf \"%.4f\" $value }} (ratio), en dessous du SLO de 99.5%"
+              runbook_url: "https://wiki.solargrid.io/alerts/slo-breach"
+
+      - name: solar_slo_recording
+        interval: 30s
+        rules:
+          # Règle d'enregistrement pour le calcul du SLO sur 24h
+          - record: solar:availability:24h
+            expr: avg_over_time(solar_availability_ratio[24h])
+
+          # Production totale par ferme sur 1h
+          - record: solar:production:1h
+            expr: sum(increase(solar_power_kw[1h])) by (farm)
+
+          # Revenus totaux sur 24h
+          - record: solar:revenue:24h
+            expr: sum(increase(solar_daily_revenue_euros[24h])) by (farm)
