@@ -1,0 +1,74 @@
+# EXEMPLE de ClusterPolicy Kyverno - Mutation
+# Cette policy modifie automatiquement les ressources pour ajouter des valeurs par défaut
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: exemple-mutation-policy
+  annotations:
+    policies.kyverno.io/title: Exemple de Mutation
+    policies.kyverno.io/category: Other
+    policies.kyverno.io/description: |
+      Cette policy démontre comment muter (modifier) automatiquement des ressources.
+      Elle ajoute des labels et annotations par défaut.
+
+spec:
+  background: true
+  
+  rules:
+  
+  # Règle 1: Ajouter des labels par défaut
+  - name: add-default-labels
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+          - Deployment
+    mutate:
+      patchStrategicMerge:
+        metadata:
+          labels:
+            # Le + signifie "ajouter si absent, ne pas écraser si présent"
+            +(managed-by): "platform-team"
+            +(cost-center): "techmarket"
+            +(environment): "production"
+  
+  # Règle 2: Ajouter des annotations
+  - name: add-annotations
+    match:
+      any:
+      - resources:
+          kinds:
+          - Deployment
+    mutate:
+      patchStrategicMerge:
+        metadata:
+          annotations:
+            +(platform.techmarket.io/managed): "true"
+            +(platform.techmarket.io/created-by): "backstage"
+  
+  # Règle 3: Ajouter un sidecar de logging (exemple avancé)
+  - name: inject-logging-sidecar
+    match:
+      any:
+      - resources:
+          kinds:
+          - Deployment
+          selector:
+            matchLabels:
+              inject-logging: "true"
+    mutate:
+      patchStrategicMerge:
+        spec:
+          template:
+            spec:
+              containers:
+              - name: log-collector
+                image: fluent/fluent-bit:2.0
+                volumeMounts:
+                - name: varlog
+                  mountPath: /var/log
+              volumes:
+              - name: varlog
+                emptyDir: {}

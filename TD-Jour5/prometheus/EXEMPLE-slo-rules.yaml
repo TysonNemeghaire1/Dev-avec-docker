@@ -1,0 +1,96 @@
+# EXEMPLE de Recording Rules Prometheus pour SLOs
+# Ces règles calculent les SLIs (Service Level Indicators) en temps réel
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-slo-rules
+  namespace: monitoring
+  labels:
+    app: prometheus
+data:
+  slo-rules.yml: |
+    groups:
+    
+    # Groupe de règles pour le Payment Service
+    - name: payment-service-slo
+      interval: 30s
+      rules:
+      
+      # SLI 1: Success Rate (Availability)
+      # Calcule le ratio de requêtes réussies (non 5xx)
+      - record: payment_service:success_rate:ratio
+        expr: |
+          sum(rate(http_requests_total{service="payment",code!~"5.."}[5m]))
+          /
+          sum(rate(http_requests_total{service="payment"}[5m]))
+      
+      # SLI 2: Latency P95
+      # 95% des requêtes doivent être sous 500ms
+      - record: payment_service:latency:p95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket{service="payment"}[5m])) by (le)
+          )
+      
+      # SLI 3: Latency P99
+      # 99% des requêtes doivent être sous 1s
+      - record: payment_service:latency:p99
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket{service="payment"}[5m])) by (le)
+          )
+      
+      # Error Budget Burn Rate
+      # Vitesse à laquelle on consomme l'error budget
+      - record: payment_service:error_budget:burn_rate_1h
+        expr: |
+          1 - (
+            sum(rate(http_requests_total{service="payment",code!~"5.."}[1h]))
+            /
+            sum(rate(http_requests_total{service="payment"}[1h]))
+          ) / (1 - 0.999)  # 0.999 = SLO de 99.9%
+    
+    # Alertes basées sur les SLOs
+    - name: payment-service-alerts
+      rules:
+      
+      # Alerte: Success Rate sous le SLO
+      - alert: PaymentServiceHighErrorRate
+        expr: payment_service:success_rate:ratio < 0.999
+        for: 5m
+        labels:
+          severity: critical
+          service: payment
+        annotations:
+          summary: "Payment Service error rate too high"
+          description: |
+            Success rate is {{ $value | humanizePercentage }}, 
+            below SLO of 99.9% for more than 5 minutes.
+            Error budget is being consumed rapidly.
+      
+      # Alerte: Latency P95 trop élevée
+      - alert: PaymentServiceHighLatency
+        expr: payment_service:latency:p95 > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: payment
+        annotations:
+          summary: "Payment Service latency too high"
+          description: |
+            P95 latency is {{ $value }}s, above target of 500ms.
+      
+      # Alerte: Burn Rate élevé (consommation rapide de l'error budget)
+      - alert: PaymentServiceFastBurn
+        expr: payment_service:error_budget:burn_rate_1h > 14.4
+        for: 5m
+        labels:
+          severity: critical
+          service: payment
+        annotations:
+          summary: "Payment Service consuming error budget too fast"
+          description: |
+            Error budget burn rate is {{ $value }}x.
+            At this rate, the monthly error budget will be exhausted in 2 hours.
+            Consider stopping deployments and investigating.

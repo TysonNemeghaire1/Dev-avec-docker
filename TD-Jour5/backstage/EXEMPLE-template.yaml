@@ -1,0 +1,107 @@
+# EXEMPLE de Software Template Backstage
+# Ce template permet de créer un nouveau service Node.js avec toute l'infrastructure
+
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: create-nodejs-service
+  title: Create Node.js Microservice
+  description: Crée un nouveau microservice Node.js avec Dockerfile, K8s manifests et CI/CD
+  tags:
+    - nodejs
+    - microservice
+    - recommended
+
+spec:
+  owner: platform-team
+  type: service
+
+  # Paramètres demandés à l'utilisateur
+  parameters:
+  - title: Informations du Service
+    required:
+    - serviceName
+    - owner
+    properties:
+      serviceName:
+        title: Nom du Service
+        type: string
+        description: Nom du service (lowercase, sans espaces)
+        pattern: '^[a-z0-9-]+$'
+        ui:autofocus: true
+      
+      description:
+        title: Description
+        type: string
+        description: Description courte du service
+      
+      owner:
+        title: Équipe Propriétaire
+        type: string
+        description: Équipe responsable du service
+        enum:
+        - team-frontend
+        - team-backend
+        - team-payments
+        - team-platform
+      
+      port:
+        title: Port HTTP
+        type: number
+        description: Port sur lequel le service écoute
+        default: 8080
+
+  - title: Configuration GitHub
+    required:
+    - repoUrl
+    properties:
+      repoUrl:
+        title: Repository Location
+        type: string
+        ui:field: RepoUrlPicker
+        ui:options:
+          allowedHosts:
+          - github.com
+
+  # Étapes d'exécution du template
+  steps:
+  # 1. Récupérer le template de base
+  - id: fetch-base
+    name: Fetch Base Template
+    action: fetch:template
+    input:
+      url: ./skeleton  # Dossier contenant les fichiers templates
+      values:
+        serviceName: ${{ parameters.serviceName }}
+        description: ${{ parameters.description }}
+        owner: ${{ parameters.owner }}
+        port: ${{ parameters.port }}
+
+  # 2. Créer le repository sur GitHub
+  - id: publish
+    name: Publish to GitHub
+    action: publish:github
+    input:
+      allowedHosts:
+      - github.com
+      description: ${{ parameters.description }}
+      repoUrl: ${{ parameters.repoUrl }}
+      repoVisibility: public
+      defaultBranch: main
+
+  # 3. Enregistrer le service dans le catalog Backstage
+  - id: register
+    name: Register in Catalog
+    action: catalog:register
+    input:
+      repoContentsUrl: ${{ steps.publish.output.repoContentsUrl }}
+      catalogInfoPath: '/catalog-info.yaml'
+
+  # Output affiché à l'utilisateur
+  output:
+    links:
+    - title: Repository
+      url: ${{ steps.publish.output.remoteUrl }}
+    - title: Open in Backstage
+      icon: catalog
+      entityRef: ${{ steps.register.output.entityRef }}

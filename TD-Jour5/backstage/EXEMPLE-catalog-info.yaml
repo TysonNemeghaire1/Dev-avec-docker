@@ -1,0 +1,76 @@
+# EXEMPLE de fichier catalog-info.yaml
+# À adapter pour vos 3 services: frontend-app, backend-api, payment-service
+
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: exemple-service
+  description: Service d'exemple pour la plateforme TechMarket
+  annotations:
+    # Lien vers le repository GitHub
+    github.com/project-slug: VOTRE_USER/VOTRE_REPO
+    
+    # ID Kubernetes pour le plugin (doit matcher le label app=xxx)
+    backstage.io/kubernetes-id: exemple-service
+    
+    # Documentation technique (TechDocs)
+    backstage.io/techdocs-ref: dir:.
+    
+  tags:
+    - nodejs
+    - microservice
+    - api
+  
+  links:
+  - url: https://github.com/VOTRE_USER/VOTRE_REPO
+    title: Source Code
+    icon: github
+  - url: http://localhost:30080
+    title: Application
+    icon: dashboard
+
+spec:
+  # Type de composant
+  type: service  # Peut être: service, library, website, etc.
+  
+  # Cycle de vie
+  lifecycle: production  # Peut être: experimental, production, deprecated
+  
+  # Équipe propriétaire (doit exister dans Backstage)
+  owner: team-backend
+  
+  # Système auquel appartient ce service
+  system: techmarket-platform
+  
+  # Dépendances (optionnel)
+  dependsOn:
+  - component:default/postgres-db
+  
+  # APIs fournies (optionnel)
+  providesApis:
+  - exemple-api
+
+---
+# Définition de l'API (optionnel mais recommandé)
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: exemple-api
+  description: API REST pour le service exemple
+spec:
+  type: openapi
+  lifecycle: production
+  owner: team-backend
+  system: techmarket-platform
+  definition: |
+    openapi: 3.0.0
+    info:
+      title: Exemple API
+      version: 1.0.0
+    paths:
+      /health:
+        get:
+          summary: Health check
+          responses:
+            '200':
+              description: Service is healthy

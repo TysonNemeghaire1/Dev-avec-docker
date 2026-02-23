@@ -1,0 +1,75 @@
+# EXEMPLE de ClusterPolicy Kyverno - Validation
+# Cette policy bloque les déploiements qui ne respectent pas les règles
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: exemple-validation-policy
+  annotations:
+    policies.kyverno.io/title: Exemple de Validation
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: |
+      Cette policy démontre comment valider des ressources Kubernetes.
+      Elle vérifie que tous les containers ont des labels appropriés.
+
+spec:
+  # Mode de validation
+  # - Enforce: Bloque les ressources non conformes
+  # - Audit: Log seulement, ne bloque pas
+  validationFailureAction: Enforce
+  
+  # Applique la policy aux ressources existantes
+  background: true
+  
+  # Liste des règles
+  rules:
+  
+  # Règle 1: Vérifier les labels obligatoires
+  - name: require-labels
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+          - Deployment
+    validate:
+      message: "Les labels 'app' et 'team' sont obligatoires"
+      pattern:
+        metadata:
+          labels:
+            app: "?*"    # ?* signifie "n'importe quelle valeur non vide"
+            team: "?*"
+  
+  # Règle 2: Interdire le tag :latest
+  - name: deny-latest-tag
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    validate:
+      message: "Le tag :latest est interdit en production"
+      pattern:
+        spec:
+          containers:
+          - name: "*"
+            image: "!*:latest"  # ! signifie "ne doit PAS matcher"
+  
+  # Règle 3: Exiger des resource limits
+  - name: require-limits
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    validate:
+      message: "Tous les containers doivent avoir des resource limits"
+      pattern:
+        spec:
+          containers:
+          - name: "*"
+            resources:
+              limits:
+                memory: "?*"
+                cpu: "?*"
