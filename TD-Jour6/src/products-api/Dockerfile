@@ -17,9 +17,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Create non-root user
-RUN addgroup -g 1001 -S appgroup && \
-    adduser -u 1001 -S appuser -G appgroup
+# Create non-root user (Debian syntax)
+RUN groupadd -g 1001 appgroup && \
+    useradd -u 1001 -g appgroup -s /bin/false -M appuser
 
 # Copy packages from builder
 COPY --from=builder /root/.local /home/appuser/.local
