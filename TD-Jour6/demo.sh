@@ -98,18 +98,20 @@ section "0.2  Images Docker dans minikube"
 SERVICES=("api-gateway" "auth-service" "products-api" "orders-api" "frontend")
 for svc in "${SERVICES[@]}"; do
   IMG="cloudshop/${svc}"
-  EXISTING=$(minikube image ls 2>/dev/null | grep "docker.io/${IMG}:latest" | head -1)
-  if [ -n "$EXISTING" ]; then
-    echo -e "  ${OK}  ${BOLD}${IMG}${NC} déjà présent dans minikube"
+  LOCAL=$(docker image inspect "${IMG}:latest" --format='{{.Id}}' 2>/dev/null)
+  MINIKUBE=$(minikube image ls 2>/dev/null | grep "docker.io/${IMG}:latest" | head -1)
+
+  if [ -n "$LOCAL" ] && [ -n "$MINIKUBE" ]; then
+    echo -e "  ${OK}  ${BOLD}${IMG}${NC} déjà présent (local + minikube)"
   else
     echo -e "  ${ARROW}  Build ${BOLD}${IMG}${NC}..."
     if docker build -t "${IMG}:latest" "${SCRIPT_DIR}/src/${svc}" -q 2>/tmp/build_err.log; then
-      echo -e "  ${ARROW}  Chargement dans minikube..."
-      if minikube image load "${IMG}:latest" 2>/tmp/load_err.log; then
-        echo -e "  ${OK}  ${BOLD}${IMG}${NC} chargé"
-      else
-        echo -e "  ${FAIL}  Échec chargement : $(head -1 /tmp/load_err.log)"
+      if [ -z "$MINIKUBE" ]; then
+        echo -e "  ${ARROW}  Chargement dans minikube..."
+        minikube image load "${IMG}:latest" 2>/tmp/load_err.log || \
+          echo -e "  ${FAIL}  Échec chargement : $(head -1 /tmp/load_err.log)"
       fi
+      echo -e "  ${OK}  ${BOLD}${IMG}${NC} prêt"
     else
       echo -e "  ${FAIL}  Échec build : $(head -1 /tmp/build_err.log)"
     fi
