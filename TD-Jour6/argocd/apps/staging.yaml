@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: cloudshop-frontend
+  name: cloudshop-staging
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -10,19 +10,22 @@ spec:
   source:
     repoURL: https://github.com/TysonNemeghaire1/Dev-avec-docker.git
     targetRevision: HEAD
-    path: TD-Jour6/k8s/ingress
+    path: TD-Jour6/k8s
+    directory:
+      recurse: true
+      include: '{deployments,services,configs}/**/*.yaml'
   destination:
     server: https://kubernetes.default.svc
-    namespace: cloudshop-prod
+    namespace: cloudshop-staging
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
-      - CreateNamespace=false
+      - CreateNamespace=true
     retry:
-      limit: 5
+      limit: 3
       backoff:
         duration: 5s
         factor: 2
-        maxDuration: 3m
+        maxDuration: 2m

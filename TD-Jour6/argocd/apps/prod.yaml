@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: cloudshop-infrastructure
+  name: cloudshop-prod
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -12,7 +12,7 @@ spec:
     targetRevision: HEAD
     path: TD-Jour6/k8s
     directory:
-      include: '{namespaces,configs}/**/*.yaml'
+      recurse: true
   destination:
     server: https://kubernetes.default.svc
     namespace: cloudshop-prod
@@ -20,7 +20,6 @@ spec:
     automated:
       prune: true
       selfHeal: true
-      allowEmpty: false
     syncOptions:
       - CreateNamespace=true
     retry:

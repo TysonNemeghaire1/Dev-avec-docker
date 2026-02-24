@@ -2,7 +2,7 @@
 
 # =============================================================================
 #  CloudShop — Script de démonstration
-#  Partie 1 : Docker  |  Partie 2 : Kubernetes
+#  Partie 1 : Docker  |  Partie 2 : Kubernetes  |  Partie 3 : GitOps
 # =============================================================================
 
 # Couleurs
@@ -64,6 +64,7 @@ echo ""
 echo -e "  Ce script démontre :"
 echo -e "  ${ARROW}  Partie 1 — Images Docker optimisées et conteneurs"
 echo -e "  ${ARROW}  Partie 2 — Déploiement Kubernetes et santé des services"
+echo -e "  ${ARROW}  Partie 3 — GitOps ArgoCD (3 environnements : dev / staging / prod)"
 wait_key
 
 # =============================================================================
@@ -115,7 +116,7 @@ echo "  $(printf '─%.0s' {1..75})"
 declare -A BASE_MB_MAP=( ["cloudshop/api-gateway"]="1100" ["cloudshop/auth-service"]="1100" ["cloudshop/products-api"]="900" ["cloudshop/orders-api"]="800" )
 declare -A BASE_MB_SHORT=(  ["api-gateway"]="1100" ["auth-service"]="1100" ["products-api"]="900" ["orders-api"]="800" )
 declare -A BASE_NAME_SHORT=( ["api-gateway"]="node:20" ["auth-service"]="node:20" ["products-api"]="python:3.11" ["orders-api"]="golang:1.21" )
-declare -A RUNTIME_SHORT=(   ["api-gateway"]="node:20-alpine" ["auth-service"]="node:20-alpine" ["products-api"]="python:3.11-slim" ["orders-api"]="alpine:latest" )
+declare -A RUNTIME_SHORT=(   ["api-gateway"]="node:20-alpine" ["auth-service"]="node:20-alpine" ["products-api"]="python:3.11-slim" ["orders-api"]="alpine:3.19" )
 
 for svc in "cloudshop/api-gateway" "cloudshop/auth-service" "cloudshop/products-api" "cloudshop/orders-api"; do
   SIZE_MB=$(minikube_image_size_mb "$svc")
@@ -430,10 +431,10 @@ kubectl get applications -n argocd --no-headers 2>/dev/null | while IFS= read -r
   if [ "$HEALTH" = "Healthy" ]; then HEALTH_COLOR="${GREEN}"; else HEALTH_COLOR="${RED}"; fi
 
   declare -A APP_PATH=(
-    ["cloudshop-infrastructure"]="k8s/{namespaces,configs}"
-    ["cloudshop-database"]="k8s/statefulsets"
-    ["cloudshop-backend"]="k8s/{deployments,services}"
-    ["cloudshop-frontend"]="k8s/ingress"
+    ["cloudshop-platform"]="argocd/apps"
+    ["cloudshop-prod"]="k8s/ (recurse)"
+    ["cloudshop-staging"]="k8s/{deployments,services,configs}"
+    ["cloudshop-dev"]="k8s/{deployments,services,configs}"
   )
   PATH_LABEL="${APP_PATH[$NAME]:-argocd/apps}"
 
@@ -445,7 +446,7 @@ done
 separator
 section "3.3  Ressources gérées par ArgoCD"
 
-for app in cloudshop-infrastructure cloudshop-database cloudshop-backend cloudshop-frontend; do
+for app in cloudshop-prod cloudshop-staging cloudshop-dev; do
   COUNT=$(kubectl get application "$app" -n argocd \
     -o jsonpath='{.status.resources}' 2>/dev/null | \
     $PYTHON -c "import sys,json; r=json.load(sys.stdin); print(len(r))" 2>/dev/null || echo "0")
@@ -519,8 +520,9 @@ echo -e "  ${OK}  SecurityContext : runAsNonRoot, allowPrivilegeEscalation=false
 echo ""
 echo -e "  ${BOLD}${GREEN}PARTIE 3 — GitOps ArgoCD${NC}"
 echo -e "  ${OK}  ArgoCD installé sur namespace argocd"
-echo -e "  ${OK}  4 Applications : infrastructure, database, backend, frontend"
-echo -e "  ${OK}  Auto-sync + Self-heal activés sur toutes les apps"
+echo -e "  ${OK}  App-of-apps : cloudshop-platform → 3 apps d'environnement"
+echo -e "  ${OK}  3 environnements : ${BOLD}dev${NC} / ${BOLD}staging${NC} / ${BOLD}prod${NC}"
+echo -e "  ${OK}  Auto-sync + Self-heal activés (prod + staging)"
 echo -e "  ${OK}  Self-heal testé et validé (recréation en < 30s)"
 echo -e "  ${OK}  Source de vérité : github.com/TysonNemeghaire1/Dev-avec-docker"
 echo ""
