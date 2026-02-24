@@ -1,9 +1,10 @@
 import os
-import uuid
 import time
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Optional
 
+import psycopg2
+import psycopg2.extras
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -11,18 +12,53 @@ from pydantic import BaseModel, Field
 
 # Configuration
 PORT = int(os.environ.get("PORT", 8082))
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 START_TIME = time.time()
 
-# In-memory storage
-products: List[dict] = []
+
+def get_db():
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = True
+    return conn
+
+
+def init_db():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            name VARCHAR(255) NOT NULL,
+            description TEXT NOT NULL,
+            price DOUBLE PRECISION NOT NULL CHECK (price > 0),
+            category VARCHAR(100) NOT NULL,
+            stock INTEGER DEFAULT 0 CHECK (stock >= 0),
+            image_url TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cur.close()
+    conn.close()
+    print("Database tables initialized")
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def find_product_by_id(product_id: str) -> Optional[dict]:
-    return next((p for p in products if p["id"] == product_id), None)
+def row_to_product(row: dict) -> dict:
+    return {
+        "id": str(row["id"]),
+        "name": row["name"],
+        "description": row["description"],
+        "price": row["price"],
+        "category": row["category"],
+        "stock": row["stock"],
+        "image_url": row["image_url"],
+        "created_at": row["created_at"].isoformat().replace("+00:00", "Z"),
+        "updated_at": row["updated_at"].isoformat().replace("+00:00", "Z"),
+    }
 
 
 # Pydantic models
@@ -63,54 +99,31 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # Seed data on startup
 @app.on_event("startup")
+def startup():
+    init_db()
+    seed_data()
+
+
 def seed_data():
-    sample_products = [
-        {
-            "id": str(uuid.uuid4()),
-            "name": "Laptop Pro 15",
-            "description": "High-performance laptop with 16GB RAM and 512GB SSD",
-            "price": 1299.99,
-            "category": "electronics",
-            "stock": 50,
-            "image_url": None,
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "name": "Wireless Headphones",
-            "description": "Noise-cancelling Bluetooth headphones with 30h battery",
-            "price": 199.99,
-            "category": "electronics",
-            "stock": 120,
-            "image_url": None,
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "name": "Running Shoes",
-            "description": "Lightweight running shoes with responsive cushioning",
-            "price": 89.99,
-            "category": "sports",
-            "stock": 200,
-            "image_url": None,
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "name": "Coffee Maker Deluxe",
-            "description": "Programmable coffee maker with built-in grinder",
-            "price": 149.99,
-            "category": "home",
-            "stock": 75,
-            "image_url": None,
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-        },
-    ]
-    products.extend(sample_products)
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM products")
+    count = cur.fetchone()[0]
+    if count == 0:
+        sample_products = [
+            ("Laptop Pro 15", "High-performance laptop with 16GB RAM and 512GB SSD", 1299.99, "electronics", 50, None),
+            ("Wireless Headphones", "Noise-cancelling Bluetooth headphones with 30h battery", 199.99, "electronics", 120, None),
+            ("Running Shoes", "Lightweight running shoes with responsive cushioning", 89.99, "sports", 200, None),
+            ("Coffee Maker Deluxe", "Programmable coffee maker with built-in grinder", 149.99, "home", 75, None),
+        ]
+        for p in sample_products:
+            cur.execute(
+                "INSERT INTO products (name, description, price, category, stock, image_url) VALUES (%s, %s, %s, %s, %s, %s)",
+                p,
+            )
+        print("Seed data inserted")
+    cur.close()
+    conn.close()
 
 
 # Health endpoints (dual routes: /health for Docker HEALTHCHECK, /products/health for API Gateway)
@@ -132,7 +145,15 @@ def health_live():
 
 @app.get("/products/health/ready")
 def health_ready():
-    return {"status": "ready"}
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.close()
+        conn.close()
+        return {"status": "ready"}
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"status": "not ready", "error": str(e)})
 
 
 # CRUD endpoints
@@ -143,82 +164,118 @@ def list_products(
     min_price: Optional[float] = Query(None, ge=0, description="Minimum price"),
     max_price: Optional[float] = Query(None, ge=0, description="Maximum price"),
 ):
-    result = products
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    clauses = []
+    params = []
 
     if category:
-        result = [p for p in result if p["category"] == category]
+        clauses.append("category = %s")
+        params.append(category)
 
     if search:
-        search_lower = search.lower()
-        result = [
-            p
-            for p in result
-            if search_lower in p["name"].lower()
-            or search_lower in p["description"].lower()
-        ]
+        clauses.append("(LOWER(name) LIKE %s OR LOWER(description) LIKE %s)")
+        params.append(f"%{search.lower()}%")
+        params.append(f"%{search.lower()}%")
 
     if min_price is not None:
-        result = [p for p in result if p["price"] >= min_price]
+        clauses.append("price >= %s")
+        params.append(min_price)
 
     if max_price is not None:
-        result = [p for p in result if p["price"] <= max_price]
+        clauses.append("price <= %s")
+        params.append(max_price)
 
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    cur.execute(f"SELECT * FROM products{where} ORDER BY created_at", params)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    result = [row_to_product(r) for r in rows]
     return {"products": result, "total": len(result)}
 
 
 @app.get("/products/{product_id}")
 def get_product(product_id: str):
-    product = find_product_by_id(product_id)
-    if not product:
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("SELECT * FROM products WHERE id = %s", (product_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not row:
         raise HTTPException(
             status_code=404,
             detail={"error": "Product not found", "code": "PRODUCT_NOT_FOUND"},
         )
-    return {"product": product}
+    return {"product": row_to_product(row)}
 
 
 @app.post("/products/", status_code=201)
 def create_product(product_data: ProductCreate):
-    product = {
-        "id": str(uuid.uuid4()),
-        "name": product_data.name,
-        "description": product_data.description,
-        "price": product_data.price,
-        "category": product_data.category,
-        "stock": product_data.stock,
-        "image_url": product_data.image_url,
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
-    }
-    products.append(product)
-    return {"message": "Product created successfully", "product": product}
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute(
+        """INSERT INTO products (name, description, price, category, stock, image_url)
+           VALUES (%s, %s, %s, %s, %s, %s)
+           RETURNING *""",
+        (product_data.name, product_data.description, product_data.price,
+         product_data.category, product_data.stock, product_data.image_url),
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return {"message": "Product created successfully", "product": row_to_product(row)}
 
 
 @app.put("/products/{product_id}")
 def update_product(product_id: str, product_data: ProductUpdate):
-    product = find_product_by_id(product_id)
-    if not product:
+    update_fields = product_data.model_dump(exclude_unset=True)
+    if not update_fields:
+        raise HTTPException(status_code=400, detail={"error": "No fields to update", "code": "VALIDATION_ERROR"})
+
+    set_clauses = []
+    params = []
+    for key, value in update_fields.items():
+        set_clauses.append(f"{key} = %s")
+        params.append(value)
+
+    set_clauses.append("updated_at = NOW()")
+    params.append(product_id)
+
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute(
+        f"UPDATE products SET {', '.join(set_clauses)} WHERE id = %s RETURNING *",
+        params,
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not row:
         raise HTTPException(
             status_code=404,
             detail={"error": "Product not found", "code": "PRODUCT_NOT_FOUND"},
         )
-
-    update_fields = product_data.model_dump(exclude_unset=True)
-    for key, value in update_fields.items():
-        product[key] = value
-    product["updated_at"] = now_iso()
-
-    return {"message": "Product updated successfully", "product": product}
+    return {"message": "Product updated successfully", "product": row_to_product(row)}
 
 
 @app.delete("/products/{product_id}")
 def delete_product(product_id: str):
-    product = find_product_by_id(product_id)
-    if not product:
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM products WHERE id = %s RETURNING id", (product_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not row:
         raise HTTPException(
             status_code=404,
             detail={"error": "Product not found", "code": "PRODUCT_NOT_FOUND"},
         )
-
-    products.remove(product)
     return {"message": "Product deleted successfully"}
