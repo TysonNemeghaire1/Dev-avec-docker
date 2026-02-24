@@ -1,14 +1,15 @@
 package main
 
 import (
-	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
+
+	_ "github.com/lib/pq"
 )
 
 // Models
@@ -38,37 +39,45 @@ type UpdateOrderRequest struct {
 	Status string `json:"status,omitempty"`
 }
 
-// In-memory storage
+// Database
 
-var (
-	orders   []Order
-	ordersMu sync.Mutex
-)
-
+var db *sql.DB
 var startTime = time.Now()
 
-// Helpers
-
-func generateUUID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
-
-func nowISO() string {
-	return time.Now().UTC().Format(time.RFC3339)
-}
-
-func findOrderByID(id string) (int, *Order) {
-	for i := range orders {
-		if orders[i].ID == id {
-			return i, &orders[i]
-		}
+func initDB() {
+	dsn := os.Getenv("DATABASE_URL")
+	var err error
+	db, err = sql.Open("postgres", dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		os.Exit(1)
 	}
-	return -1, nil
+
+	if err = db.Ping(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to ping database: %v\n", err)
+		os.Exit(1)
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS orders (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id VARCHAR(255) NOT NULL,
+			items JSONB NOT NULL,
+			total DOUBLE PRECISION NOT NULL,
+			status VARCHAR(50) DEFAULT 'pending',
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)
+	`)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create table: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("Database tables initialized")
 }
+
+// Helpers
 
 func calculateTotal(items []OrderItem) float64 {
 	total := 0.0
@@ -78,53 +87,93 @@ func calculateTotal(items []OrderItem) float64 {
 	return total
 }
 
+func nowISO() string {
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
 }
 
+func scanOrder(row interface{ Scan(dest ...interface{}) error }) (*Order, error) {
+	var o Order
+	var itemsJSON []byte
+	var createdAt, updatedAt time.Time
+
+	err := row.Scan(&o.ID, &o.UserID, &itemsJSON, &o.Total, &o.Status, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := json.Unmarshal(itemsJSON, &o.Items); err != nil {
+		return nil, err
+	}
+
+	o.CreatedAt = createdAt.UTC().Format(time.RFC3339)
+	o.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
+
+	return &o, nil
+}
+
 // Seed data
 
 func seedOrders() {
-	now := nowISO()
-	orders = []Order{
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM orders").Scan(&count); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to count orders: %v\n", err)
+		return
+	}
+	if count > 0 {
+		return
+	}
+
+	seeds := []struct {
+		userID string
+		items  []OrderItem
+		total  float64
+		status string
+	}{
 		{
-			ID:     generateUUID(),
-			UserID: "user-001",
-			Items: []OrderItem{
+			userID: "user-001",
+			items: []OrderItem{
 				{ProductID: "prod-001", Quantity: 2, Price: 29.99},
 				{ProductID: "prod-003", Quantity: 1, Price: 49.99},
 			},
-			Total:     109.97,
-			Status:    "confirmed",
-			CreatedAt: now,
-			UpdatedAt: now,
+			total:  109.97,
+			status: "confirmed",
 		},
 		{
-			ID:     generateUUID(),
-			UserID: "user-002",
-			Items: []OrderItem{
+			userID: "user-002",
+			items: []OrderItem{
 				{ProductID: "prod-002", Quantity: 1, Price: 99.99},
 			},
-			Total:     99.99,
-			Status:    "pending",
-			CreatedAt: now,
-			UpdatedAt: now,
+			total:  99.99,
+			status: "pending",
 		},
 		{
-			ID:     generateUUID(),
-			UserID: "user-001",
-			Items: []OrderItem{
+			userID: "user-001",
+			items: []OrderItem{
 				{ProductID: "prod-004", Quantity: 3, Price: 15.00},
 				{ProductID: "prod-005", Quantity: 1, Price: 199.99},
 			},
-			Total:     244.99,
-			Status:    "delivered",
-			CreatedAt: now,
-			UpdatedAt: now,
+			total:  244.99,
+			status: "delivered",
 		},
 	}
+
+	for _, s := range seeds {
+		itemsJSON, _ := json.Marshal(s.items)
+		_, err := db.Exec(
+			"INSERT INTO orders (user_id, items, total, status) VALUES ($1, $2, $3, $4)",
+			s.userID, itemsJSON, s.total, s.status,
+		)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to seed order: %v\n", err)
+		}
+	}
+	fmt.Println("Seed data inserted")
 }
 
 // Health handlers
@@ -166,6 +215,13 @@ func healthReadyHandler(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if err := db.Ping(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"status": "not ready",
+			"error":  err.Error(),
+		})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status": "ready",
 	})
@@ -174,20 +230,40 @@ func healthReadyHandler(w http.ResponseWriter, r *http.Request) {
 // CRUD handlers
 
 func listOrdersHandler(w http.ResponseWriter, r *http.Request) {
-	ordersMu.Lock()
-	defer ordersMu.Unlock()
-
 	statusFilter := r.URL.Query().Get("status")
 
-	var result []Order
-	for _, o := range orders {
-		if statusFilter == "" || o.Status == statusFilter {
-			result = append(result, o)
-		}
+	var rows *sql.Rows
+	var err error
+
+	if statusFilter != "" {
+		rows, err = db.Query(
+			"SELECT id, user_id, items, total, status, created_at, updated_at FROM orders WHERE status = $1 ORDER BY created_at",
+			statusFilter,
+		)
+	} else {
+		rows, err = db.Query("SELECT id, user_id, items, total, status, created_at, updated_at FROM orders ORDER BY created_at")
 	}
 
-	if result == nil {
-		result = []Order{}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "Failed to list orders",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+	defer rows.Close()
+
+	result := []Order{}
+	for rows.Next() {
+		o, err := scanOrder(rows)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+				"error": "Failed to scan order",
+				"code":  "INTERNAL_ERROR",
+			})
+			return
+		}
+		result = append(result, *o)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -197,14 +273,22 @@ func listOrdersHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getOrderHandler(w http.ResponseWriter, r *http.Request, id string) {
-	ordersMu.Lock()
-	defer ordersMu.Unlock()
-
-	_, order := findOrderByID(id)
-	if order == nil {
+	row := db.QueryRow(
+		"SELECT id, user_id, items, total, status, created_at, updated_at FROM orders WHERE id = $1",
+		id,
+	)
+	order, err := scanOrder(row)
+	if err == sql.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]interface{}{
 			"error": "Order not found",
 			"code":  "ORDER_NOT_FOUND",
+		})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "Failed to get order",
+			"code":  "INTERNAL_ERROR",
 		})
 		return
 	}
@@ -250,24 +334,28 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	now := nowISO()
-	order := Order{
-		ID:        generateUUID(),
-		UserID:    req.UserID,
-		Items:     req.Items,
-		Total:     calculateTotal(req.Items),
-		Status:    "pending",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
+	total := calculateTotal(req.Items)
+	itemsJSON, _ := json.Marshal(req.Items)
 
-	ordersMu.Lock()
-	orders = append(orders, order)
-	ordersMu.Unlock()
+	row := db.QueryRow(
+		`INSERT INTO orders (user_id, items, total, status)
+		 VALUES ($1, $2, $3, 'pending')
+		 RETURNING id, user_id, items, total, status, created_at, updated_at`,
+		req.UserID, itemsJSON, total,
+	)
+
+	order, err := scanOrder(row)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "Failed to create order",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"message": "Order created successfully",
-		"order":   order,
+		"order":   *order,
 	})
 }
 
@@ -297,22 +385,28 @@ func updateOrderHandler(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	ordersMu.Lock()
-	defer ordersMu.Unlock()
+	row := db.QueryRow(
+		`UPDATE orders SET status = $1, updated_at = NOW()
+		 WHERE id = $2
+		 RETURNING id, user_id, items, total, status, created_at, updated_at`,
+		req.Status, id,
+	)
 
-	_, order := findOrderByID(id)
-	if order == nil {
+	order, err := scanOrder(row)
+	if err == sql.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]interface{}{
 			"error": "Order not found",
 			"code":  "ORDER_NOT_FOUND",
 		})
 		return
 	}
-
-	if req.Status != "" {
-		order.Status = req.Status
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "Failed to update order",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
 	}
-	order.UpdatedAt = nowISO()
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Order updated successfully",
@@ -321,19 +415,23 @@ func updateOrderHandler(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func deleteOrderHandler(w http.ResponseWriter, r *http.Request, id string) {
-	ordersMu.Lock()
-	defer ordersMu.Unlock()
+	result, err := db.Exec("DELETE FROM orders WHERE id = $1", id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "Failed to delete order",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
 
-	idx, _ := findOrderByID(id)
-	if idx == -1 {
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]interface{}{
 			"error": "Order not found",
 			"code":  "ORDER_NOT_FOUND",
 		})
 		return
 	}
-
-	orders = append(orders[:idx], orders[idx+1:]...)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Order deleted successfully",
@@ -404,6 +502,9 @@ func main() {
 	if port == "" {
 		port = "8083"
 	}
+
+	initDB()
+	defer db.Close()
 
 	seedOrders()
 
