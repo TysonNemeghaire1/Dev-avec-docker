@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudshop-prod
+  labels:
+    name: cloudshop-prod
+    environment: production

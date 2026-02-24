@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: cloudshop-prod
+data:
+  # URLs internes des microservices
+  AUTH_SERVICE_URL: "http://auth-service:8081"
+  PRODUCTS_SERVICE_URL: "http://products-service:8082"
+  ORDERS_SERVICE_URL: "http://orders-service:8083"
+
+  # Configuration applicative
+  LOG_LEVEL: "info"
+  NODE_ENV: "production"
