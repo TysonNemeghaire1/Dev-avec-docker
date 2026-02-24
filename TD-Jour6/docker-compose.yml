@@ -1,5 +1,3 @@
-version: '3.9'
-
 networks:
   cloudshop-net:
     driver: bridge
@@ -35,6 +33,7 @@ services:
     environment:
       JWT_SECRET: ${JWT_SECRET}
       NODE_ENV: production
+      DATABASE_URL: postgresql://cloudshop:${POSTGRES_PASSWORD}@postgres:5432/cloudshop?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,6 +52,7 @@ services:
       - "8082:8082"
     environment:
       PORT: "8082"
+      DATABASE_URL: postgresql://cloudshop:${POSTGRES_PASSWORD}@postgres:5432/cloudshop?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,6 +71,7 @@ services:
       - "8083:8083"
     environment:
       PORT: "8083"
+      DATABASE_URL: postgresql://cloudshop:${POSTGRES_PASSWORD}@postgres:5432/cloudshop?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
