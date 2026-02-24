@@ -133,12 +133,12 @@ const styles = {
 function ProductsTab() {
   const [products, setProducts] = useState([])
   const [error, setError] = useState(null)
-  const [form, setForm] = useState({ name: '', price: '', category: '' })
+  const [form, setForm] = useState({ name: '', price: '', category: '', description: '', stock: '' })
 
   const fetchProducts = useCallback(async () => {
     try {
       setError(null)
-      const res = await fetch(`${API_URL}/products/products/`)
+      const res = await fetch(`${API_URL}/products/`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setProducts(Array.isArray(data) ? data : data.products || [])
@@ -153,17 +153,19 @@ function ProductsTab() {
     e.preventDefault()
     try {
       setError(null)
-      const res = await fetch(`${API_URL}/products/products/`, {
+      const res = await fetch(`${API_URL}/products/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: form.name,
           price: parseFloat(form.price),
           category: form.category,
+          description: form.description,
+          stock: parseInt(form.stock, 10),
         }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      setForm({ name: '', price: '', category: '' })
+      setForm({ name: '', price: '', category: '', description: '', stock: '' })
       fetchProducts()
     } catch (err) {
       setError(`Failed to create product: ${err.message}`)
@@ -207,6 +209,26 @@ function ProductsTab() {
             required
           />
         </div>
+        <div style={styles.fieldGroup}>
+          <label style={styles.label}>Description</label>
+          <input
+            style={styles.input}
+            value={form.description}
+            onChange={(e) => setForm({ ...form, description: e.target.value })}
+            required
+          />
+        </div>
+        <div style={styles.fieldGroup}>
+          <label style={styles.label}>Stock</label>
+          <input
+            style={styles.input}
+            type="number"
+            min="0"
+            value={form.stock}
+            onChange={(e) => setForm({ ...form, stock: e.target.value })}
+            required
+          />
+        </div>
         <button type="submit" style={styles.button}>Add Product</button>
       </form>
 
@@ -217,6 +239,7 @@ function ProductsTab() {
             <th style={styles.th}>Name</th>
             <th style={styles.th}>Price</th>
             <th style={styles.th}>Category</th>
+            <th style={styles.th}>Stock</th>
           </tr>
         </thead>
         <tbody>
@@ -226,11 +249,12 @@ function ProductsTab() {
               <td style={styles.td}>{p.name}</td>
               <td style={styles.td}>{p.price?.toFixed(2)} &euro;</td>
               <td style={styles.td}>{p.category}</td>
+              <td style={styles.td}>{p.stock}</td>
             </tr>
           ))}
           {products.length === 0 && (
             <tr>
-              <td style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)' }} colSpan={4}>
+              <td style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)' }} colSpan={5}>
                 No products yet
               </td>
             </tr>
@@ -244,12 +268,12 @@ function ProductsTab() {
 function OrdersTab() {
   const [orders, setOrders] = useState([])
   const [error, setError] = useState(null)
-  const [form, setForm] = useState({ product_id: '', quantity: '' })
+  const [form, setForm] = useState({ user_id: '', product_id: '', quantity: '', price: '' })
 
   const fetchOrders = useCallback(async () => {
     try {
       setError(null)
-      const res = await fetch(`${API_URL}/orders/orders/`)
+      const res = await fetch(`${API_URL}/orders/`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setOrders(Array.isArray(data) ? data : data.orders || [])
@@ -264,16 +288,20 @@ function OrdersTab() {
     e.preventDefault()
     try {
       setError(null)
-      const res = await fetch(`${API_URL}/orders/orders/`, {
+      const res = await fetch(`${API_URL}/orders/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          product_id: form.product_id,
-          quantity: parseInt(form.quantity, 10),
+          user_id: form.user_id,
+          items: [{
+            product_id: form.product_id,
+            quantity: parseInt(form.quantity, 10),
+            price: parseFloat(form.price),
+          }],
         }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      setForm({ product_id: '', quantity: '' })
+      setForm({ user_id: '', product_id: '', quantity: '', price: '' })
       fetchOrders()
     } catch (err) {
       setError(`Failed to create order: ${err.message}`)
@@ -287,6 +315,15 @@ function OrdersTab() {
       {error && <div style={styles.error}>{error}</div>}
 
       <form onSubmit={handleSubmit} style={styles.form}>
+        <div style={styles.fieldGroup}>
+          <label style={styles.label}>User ID</label>
+          <input
+            style={styles.input}
+            value={form.user_id}
+            onChange={(e) => setForm({ ...form, user_id: e.target.value })}
+            required
+          />
+        </div>
         <div style={styles.fieldGroup}>
           <label style={styles.label}>Product ID</label>
           <input
@@ -307,6 +344,18 @@ function OrdersTab() {
             required
           />
         </div>
+        <div style={styles.fieldGroup}>
+          <label style={styles.label}>Unit Price</label>
+          <input
+            style={styles.input}
+            type="number"
+            step="0.01"
+            min="0"
+            value={form.price}
+            onChange={(e) => setForm({ ...form, price: e.target.value })}
+            required
+          />
+        </div>
         <button type="submit" style={styles.button}>Create Order</button>
       </form>
 
@@ -314,19 +363,21 @@ function OrdersTab() {
         <thead>
           <tr>
             <th style={styles.th}>ID</th>
-            <th style={styles.th}>Product ID</th>
-            <th style={styles.th}>Quantity</th>
+            <th style={styles.th}>User</th>
+            <th style={styles.th}>Items</th>
+            <th style={styles.th}>Total</th>
             <th style={styles.th}>Status</th>
           </tr>
         </thead>
         <tbody>
           {orders.map((o) => (
             <tr key={o.id}>
-              <td style={styles.td}>{o.id}</td>
-              <td style={styles.td}>{o.product_id}</td>
-              <td style={styles.td}>{o.quantity}</td>
+              <td style={styles.td}>{o.id?.slice(0, 8)}...</td>
+              <td style={styles.td}>{o.user_id}</td>
+              <td style={styles.td}>{o.items?.length || 0} item(s)</td>
+              <td style={styles.td}>{o.total?.toFixed(2)} &euro;</td>
               <td style={styles.td}>
-                <span style={styles.badge(o.status === 'completed' ? 'green' : 'gray')}>
+                <span style={styles.badge(o.status === 'delivered' ? 'green' : o.status === 'confirmed' ? 'green' : 'gray')}>
                   {o.status || 'pending'}
                 </span>
               </td>
@@ -334,7 +385,7 @@ function OrdersTab() {
           ))}
           {orders.length === 0 && (
             <tr>
-              <td style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)' }} colSpan={4}>
+              <td style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)' }} colSpan={5}>
                 No orders yet
               </td>
             </tr>
