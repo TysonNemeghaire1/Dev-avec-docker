@@ -244,9 +244,72 @@ for svc in "cloudshop/api-gateway" "cloudshop/auth-service" "cloudshop/products-
   fi
 done
 
-# ── 1.3 Docker Compose ──────────────────────────────────────────────────────
+# ── 1.3 Scan Trivy ──────────────────────────────────────────────────────────
 separator
-section "1.3  Conteneurs Docker Compose (stack locale)"
+section "1.3  Scan de sécurité Trivy"
+
+printf "  ${BOLD}%-30s %-10s %-8s %-8s %s${NC}\n" "IMAGE" "CRITIQUE" "HAUTE" "MOYENNE" "STATUT"
+echo "  $(printf '─%.0s' {1..70})"
+
+SCAN_IMAGES=("cloudshop/frontend" "cloudshop/api-gateway" "cloudshop/auth-service" "cloudshop/products-api" "cloudshop/orders-api")
+TOTAL_CRIT=0
+
+for img in "${SCAN_IMAGES[@]}"; do
+  docker save "${img}:latest" > /tmp/trivy_scan.tar 2>/dev/null
+  RESULT=$(docker run --rm \
+    -v "$HOME/Library/Caches:/root/.cache/" \
+    -v /tmp/trivy_scan.tar:/scan.tar \
+    aquasec/trivy:0.69.1 image \
+    --severity CRITICAL,HIGH,MEDIUM \
+    --no-progress --quiet --format json \
+    --input /scan.tar 2>/dev/null)
+
+  echo "$RESULT" > /tmp/trivy_result.json
+  COUNTS=$($PYTHON -c "
+import json
+with open('/tmp/trivy_result.json') as f:
+  d = json.load(f)
+crit = high = med = 0
+for r in (d.get('Results') or []):
+  for v in (r.get('Vulnerabilities') or []):
+    s = v.get('Severity','')
+    if s == 'CRITICAL': crit += 1
+    elif s == 'HIGH':   high += 1
+    elif s == 'MEDIUM': med  += 1
+print(crit, high, med)
+" 2>/dev/null || echo "? ? ?")
+
+  CRIT=$(echo "$COUNTS" | $AWK '{print $1}')
+  HIGH=$(echo "$COUNTS" | $AWK '{print $2}')
+  MED=$(echo  "$COUNTS" | $AWK '{print $3}')
+
+  if [ "$CRIT" = "0" ] && [ "$HIGH" = "0" ]; then
+    STATUT="${GREEN}✓ Propre${NC}"
+  elif [ "$CRIT" = "0" ]; then
+    STATUT="${YELLOW}⚠ Avertissements${NC}"
+  else
+    STATUT="${RED}✗ Critiques${NC}"
+  fi
+
+  CRIT_COLOR="${GREEN}"; [ "$CRIT" != "0" ] && [ "$CRIT" != "?" ] && CRIT_COLOR="${RED}"
+  HIGH_COLOR="${GREEN}"; [ "$HIGH" != "0" ] && [ "$HIGH" != "?" ] && HIGH_COLOR="${YELLOW}"
+
+  printf "  ${OK}  ${BOLD}%-28s${NC} ${CRIT_COLOR}%-10s${NC} ${HIGH_COLOR}%-8s${NC} %-8s %b\n" \
+    "$img" "$CRIT" "$HIGH" "$MED" "$STATUT"
+
+  [ "$CRIT" != "?" ] && TOTAL_CRIT=$((TOTAL_CRIT + CRIT))
+done
+
+echo ""
+if [ "$TOTAL_CRIT" -eq 0 ]; then
+  echo -e "  ${GREEN}${BOLD}Aucune vulnérabilité critique détectée ✓${NC}"
+else
+  echo -e "  ${RED}${BOLD}${TOTAL_CRIT} vulnérabilité(s) critique(s) à corriger${NC}"
+fi
+
+# ── 1.4 Docker Compose ──────────────────────────────────────────────────────
+separator
+section "1.4  Conteneurs Docker Compose (stack locale)"
 
 CS_RUNNING=$(docker compose -f docker-compose.yml ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null)
 if [ -n "$CS_RUNNING" ]; then
@@ -276,7 +339,7 @@ fi
 
 # ── Arrêt de la stack Docker Compose ────────────────────────────────────────
 separator
-section "1.4  Arrêt de la stack Docker Compose"
+section "1.5  Arrêt de la stack Docker Compose"
 
 echo -e "  ${ARROW}  Arrêt des conteneurs pour libérer les ports (8080, 8081, 8082, 8083, 5432)..."
 docker compose -f docker-compose.yml down 2>&1 | while IFS= read -r line; do
