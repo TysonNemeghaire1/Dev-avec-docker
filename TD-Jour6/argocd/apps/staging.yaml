@@ -13,7 +13,7 @@ spec:
     path: TD-Jour6/k8s
     directory:
       recurse: true
-      include: '{deployments,services,configs}/**/*.yaml'
+      include: '{deployments,services,configs}/**'
   destination:
     server: https://kubernetes.default.svc
     namespace: cloudshop-staging
