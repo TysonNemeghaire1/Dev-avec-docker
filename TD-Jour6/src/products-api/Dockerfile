@@ -18,14 +18,15 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Create non-root user
-RUN useradd -m -u 1001 appuser
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -u 1001 -S appuser -G appgroup
 
 # Copy packages from builder
 COPY --from=builder /root/.local /home/appuser/.local
 ENV PATH=/home/appuser/.local/bin:$PATH
 
 # Copy application code
-COPY --chown=appuser:appuser . .
+COPY --chown=appuser:appgroup . .
 
 USER appuser
 
