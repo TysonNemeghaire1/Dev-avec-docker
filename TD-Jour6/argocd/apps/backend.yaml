@@ -12,8 +12,8 @@ spec:
     targetRevision: HEAD
     path: TD-Jour6/k8s
     directory:
-      include: '{deployments,services}/**/*.yaml'
-      exclude: 'deployments/frontend.yaml'
+      recurse: true
+      include: '{deployments,services}/*.yaml'
   destination:
     server: https://kubernetes.default.svc
     namespace: cloudshop-prod

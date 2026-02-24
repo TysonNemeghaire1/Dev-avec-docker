@@ -10,9 +10,7 @@ spec:
   source:
     repoURL: https://github.com/TysonNemeghaire1/Dev-avec-docker.git
     targetRevision: HEAD
-    path: TD-Jour6/k8s
-    directory:
-      include: '{deployments/frontend.yaml,ingress}/**/*.yaml'
+    path: TD-Jour6/k8s/ingress
   destination:
     server: https://kubernetes.default.svc
     namespace: cloudshop-prod
