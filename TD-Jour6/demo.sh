@@ -21,6 +21,7 @@ ARROW="${CYAN}▶${NC}"
 
 AWK=$(which awk || echo /usr/bin/awk)
 PYTHON=$(which python3 || which python)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 separator() { echo -e "\n${DIM}$(printf '─%.0s' {1..70})${NC}\n"; }
 
@@ -65,6 +66,117 @@ echo -e "  Ce script démontre :"
 echo -e "  ${ARROW}  Partie 1 — Images Docker optimisées et conteneurs"
 echo -e "  ${ARROW}  Partie 2 — Déploiement Kubernetes et santé des services"
 echo -e "  ${ARROW}  Partie 3 — GitOps ArgoCD (3 environnements : dev / staging / prod)"
+wait_key
+
+# =============================================================================
+# PHASE 0 — BOOTSTRAP (démarre l'environnement si nécessaire)
+# =============================================================================
+clear
+header "Phase 0 — Préparation de l'environnement"
+
+# ── 0.1 Minikube ─────────────────────────────────────────────────────────────
+section "0.1  Cluster minikube"
+
+MINIKUBE_STATUS=$(minikube status --format='{{.Host}}' 2>/dev/null)
+if [ "$MINIKUBE_STATUS" = "Running" ]; then
+  echo -e "  ${OK}  Minikube déjà Running"
+else
+  echo -e "  ${ARROW}  Démarrage de minikube (driver=docker, 4 CPU, 4 Go RAM)..."
+  minikube start --driver=docker --cpus=4 --memory=4096 2>&1 | \
+    while IFS= read -r line; do echo -e "  ${DIM}${line}${NC}"; done
+  echo ""
+  echo -e "  ${OK}  Minikube démarré"
+  echo -e "  ${ARROW}  Activation de l'addon ingress..."
+  minikube addons enable ingress 2>&1 | grep -E "✅|enabled|already" | \
+    while IFS= read -r line; do echo -e "  ${DIM}${line}${NC}"; done
+fi
+
+# ── 0.2 Build & chargement des images ────────────────────────────────────────
+separator
+section "0.2  Images Docker dans minikube"
+
+SERVICES=("api-gateway" "auth-service" "products-api" "orders-api" "frontend")
+for svc in "${SERVICES[@]}"; do
+  IMG="cloudshop/${svc}"
+  EXISTING=$(minikube image ls 2>/dev/null | grep "docker.io/${IMG}:latest" | head -1)
+  if [ -n "$EXISTING" ]; then
+    echo -e "  ${OK}  ${BOLD}${IMG}${NC} déjà présent dans minikube"
+  else
+    echo -e "  ${ARROW}  Build ${BOLD}${IMG}${NC}..."
+    if docker build -t "${IMG}:latest" "${SCRIPT_DIR}/src/${svc}" -q 2>/tmp/build_err.log; then
+      echo -e "  ${ARROW}  Chargement dans minikube..."
+      if minikube image load "${IMG}:latest" 2>/tmp/load_err.log; then
+        echo -e "  ${OK}  ${BOLD}${IMG}${NC} chargé"
+      else
+        echo -e "  ${FAIL}  Échec chargement : $(head -1 /tmp/load_err.log)"
+      fi
+    else
+      echo -e "  ${FAIL}  Échec build : $(head -1 /tmp/build_err.log)"
+    fi
+  fi
+done
+
+# ── 0.3 ArgoCD ───────────────────────────────────────────────────────────────
+separator
+section "0.3  Installation ArgoCD"
+
+ARGOCD_NS=$(kubectl get namespace argocd --no-headers 2>/dev/null | $AWK '{print $1}')
+if [ "$ARGOCD_NS" != "argocd" ]; then
+  echo -e "  ${ARROW}  Création du namespace argocd..."
+  kubectl create namespace argocd
+  echo -e "  ${ARROW}  Application du manifeste ArgoCD stable..."
+  kubectl apply -n argocd \
+    -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml \
+    2>&1 | tail -5 | while IFS= read -r line; do echo -e "  ${DIM}${line}${NC}"; done
+else
+  echo -e "  ${OK}  Namespace argocd existant"
+fi
+
+echo -e "\n  ${ARROW}  Attente argocd-server et argocd-repo-server (jusqu'à 3 min)..."
+kubectl wait deployment argocd-server argocd-repo-server -n argocd \
+  --for=condition=Available --timeout=180s 2>/dev/null
+if [ $? -eq 0 ]; then
+  echo -e "  ${OK}  ArgoCD opérationnel"
+else
+  echo -e "  ${FAIL}  Timeout ArgoCD — vérifiez : kubectl get pods -n argocd"
+  exit 1
+fi
+
+# ── 0.4 App-of-Apps ──────────────────────────────────────────────────────────
+separator
+section "0.4  Déploiement App-of-Apps"
+
+kubectl apply -f "${SCRIPT_DIR}/argocd/apps/app-of-apps.yaml" 2>&1 | \
+  while IFS= read -r line; do echo -e "  ${DIM}${line}${NC}"; done
+
+echo -e "\n  ${ARROW}  Attente synchronisation des 4 applications (jusqu'à 2 min)..."
+for i in $(seq 1 24); do
+  TOTAL_APPS=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
+  UNKNOWN_APPS=$(kubectl get applications -n argocd --no-headers 2>/dev/null | grep -c "Unknown" || true)
+  SYNCED_APPS=$((TOTAL_APPS - UNKNOWN_APPS))
+  if [ "$TOTAL_APPS" -ge 4 ] && [ "$UNKNOWN_APPS" -eq 0 ]; then
+    echo -e "  ${OK}  ${SYNCED_APPS}/${TOTAL_APPS} applications synchronisées"
+    break
+  fi
+  printf "  ${DIM}  %ds... (%s/%s synced)${NC}     \r" "$((i * 5))" "$SYNCED_APPS" "$TOTAL_APPS"
+  sleep 5s
+done
+
+echo -e "\n  ${ARROW}  Attente pods cloudshop-prod Running (jusqu'à 2 min)..."
+PODS_READY=false
+for i in $(seq 1 24); do
+  RUNNING_PODS=$(kubectl get pods -n cloudshop-prod --no-headers 2>/dev/null | grep -c "Running" || true)
+  TOTAL_PODS=$(kubectl get pods -n cloudshop-prod --no-headers 2>/dev/null | wc -l)
+  if [ "$TOTAL_PODS" -gt 0 ] && [ "$RUNNING_PODS" -eq "$TOTAL_PODS" ]; then
+    echo -e "  ${OK}  ${RUNNING_PODS}/${TOTAL_PODS} pods Running dans cloudshop-prod"
+    PODS_READY=true
+    break
+  fi
+  printf "  ${DIM}  %ds... (%s/%s Running)${NC}     \r" "$((i * 5))" "$RUNNING_PODS" "$TOTAL_PODS"
+  sleep 5s
+done
+[ "$PODS_READY" = false ] && echo -e "  ${YELLOW}  Attention : certains pods pas encore prêts${NC}"
+
 wait_key
 
 # =============================================================================
