@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: api-gateway
-  namespace: cloudshop-prod
   labels:
     app: api-gateway
     version: v1.0.0

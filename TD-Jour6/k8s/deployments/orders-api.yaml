@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: orders-api
-  namespace: cloudshop-prod
   labels:
     app: orders-api
     version: v1.0.0

@@ -27,20 +27,7 @@ app.use(cors({
   maxAge: 86400
 }));
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100,
-  message: {
-    status: 429,
-    error: 'Too many requests, please try again later.'
-  },
-  standardHeaders: true,
-  legacyHeaders: false
-});
-app.use(limiter);
-
-// Health check endpoints
+// Health check endpoints — AVANT le rate limiter pour éviter les 429 sur les probes K8s
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'healthy',
@@ -57,6 +44,19 @@ app.get('/health/live', (req, res) => {
 app.get('/health/ready', (req, res) => {
   res.status(200).json({ status: 'ready' });
 });
+
+// Rate limiting — appliqué uniquement aux routes métier
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100,
+  message: {
+    status: 429,
+    error: 'Too many requests, please try again later.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.use(limiter);
 
 // Proxy to Auth Service
 app.use('/auth', createProxyMiddleware({
